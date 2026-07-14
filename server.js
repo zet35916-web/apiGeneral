@@ -13,6 +13,8 @@ app.use(express.json());
 app.use('/auth', require('./auth-module'));
 app.use('/sync', require('./sync-module'));
 app.use('/config', require('./config-module'));
+app.use('/tienda', require('./tienda-module'));
+
 
 app.get('/health', (req, res) => res.json({ ok: true }));
 
