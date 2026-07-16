@@ -1,37 +1,53 @@
 const nodemailer = require('nodemailer');
-const dns = require('dns');
+const dns = require('dns').promises;
 
-// El `family: 4` del transporter de abajo no alcanza por sí solo: en
-// algunos hostings (Render incluido) Node resuelve el DNS de
-// smtp.gmail.com ANTES de que nodemailer pueda forzar la familia de la
-// conexión, y termina intentando la IPv6 igual (que no tiene salida de
-// red ahí, de ahí el ENETUNREACH/ESOCKET).
+// El intento anterior (dns.setDefaultResultOrder('ipv4first')) solo
+// REORDENA resultados cuando el lookup devuelve tanto IPv4 como IPv6.
+// En Render, el lookup de smtp.gmail.com parece devolver únicamente la
+// IPv6 en ese momento — no hay nada que reordenar, y la conexión sigue
+// yéndose por una ruta sin salida de red (ENETUNREACH).
 //
-// Esto cambia el ORDEN DE RESOLUCIÓN DNS a nivel de todo el proceso de
-// Node: cuando el hostname tiene tanto registro A (IPv4) como AAAA
-// (IPv6), prueba primero la IPv4. Requiere Node 18+.
-dns.setDefaultResultOrder('ipv4first');
+// Solución más directa: resolver explícitamente el registro A
+// (dns.resolve4 SOLO pide IPv4, nunca AAAA) y conectarnos a esa IP
+// numérica en vez de al hostname. Mantenemos `servername` en las
+// opciones de TLS para que la verificación del certificado siga
+// funcionando igual que si nos conectáramos por nombre.
+let transporterPromise = null;
 
-// Envío simple vía Gmail usando una "contraseña de aplicación"
-// (myaccount.google.com/apppasswords). No requiere OAuth ni Google Cloud
-// Console — solo que la cuenta tenga verificación en 2 pasos activada.
-//
-// Variables de entorno necesarias:
-//   GMAIL_USER           -> la cuenta de Gmail que envía (ej. notificaciones@gmail.com)
-//   GMAIL_APP_PASSWORD   -> la contraseña de aplicación de 16 caracteres
-//   GMAIL_DESTINO        -> (opcional) a dónde llega el aviso; si no se define, se manda a GMAIL_USER
-const transporter = nodemailer.createTransport({
-  host: 'smtp.gmail.com',
-  port: 465,
-  secure: true,
-  family: 4,
-  auth: {
-    user: process.env.GMAIL_USER,
-    pass: process.env.GMAIL_APP_PASSWORD,
-  },
-});
+async function crearTransporter() {
+  const direcciones = await dns.resolve4('smtp.gmail.com');
+  const ip = direcciones[0];
+
+  return nodemailer.createTransport({
+    host: ip,
+    port: 465,
+    secure: true,
+    tls: {
+      servername: 'smtp.gmail.com', // necesario para que el certificado TLS valide correctamente al conectar por IP
+    },
+    auth: {
+      user: process.env.GMAIL_USER,
+      pass: process.env.GMAIL_APP_PASSWORD,
+    },
+  });
+}
+
+// Se resuelve una sola vez y se reutiliza (la IP de Gmail no cambia
+// tan seguido como para resolverla en cada envío). Si algo falla al
+// crearlo, no dejamos la promesa rota cacheada para siempre — se
+// reintenta desde cero en el próximo envío.
+function obtenerTransporter() {
+  if (!transporterPromise) {
+    transporterPromise = crearTransporter().catch((err) => {
+      transporterPromise = null;
+      throw err;
+    });
+  }
+  return transporterPromise;
+}
 
 async function enviarNotificacionContacto({ nombre, correo, mensaje }) {
+  const transporter = await obtenerTransporter();
   await transporter.sendMail({
     from: `"Río Cristal - Web" <${process.env.GMAIL_USER}>`,
     to: process.env.GMAIL_DESTINO || process.env.GMAIL_USER,
@@ -45,6 +61,7 @@ async function enviarNotificacionContacto({ nombre, correo, mensaje }) {
 // que su mensaje llegó. Sin ofertas ni contenido de marketing (eso es
 // un feature aparte, no construido todavía) — es un acuse de recibo.
 async function enviarConfirmacionCliente({ nombre, correo }) {
+  const transporter = await obtenerTransporter();
   await transporter.sendMail({
     from: `"Río Cristal Acuarios" <${process.env.GMAIL_USER}>`,
     to: correo,
