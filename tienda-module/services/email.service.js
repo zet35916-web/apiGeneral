@@ -1,4 +1,16 @@
 const nodemailer = require('nodemailer');
+const dns = require('dns');
+
+// El `family: 4` del transporter de abajo no alcanza por sí solo: en
+// algunos hostings (Render incluido) Node resuelve el DNS de
+// smtp.gmail.com ANTES de que nodemailer pueda forzar la familia de la
+// conexión, y termina intentando la IPv6 igual (que no tiene salida de
+// red ahí, de ahí el ENETUNREACH/ESOCKET).
+//
+// Esto cambia el ORDEN DE RESOLUCIÓN DNS a nivel de todo el proceso de
+// Node: cuando el hostname tiene tanto registro A (IPv4) como AAAA
+// (IPv6), prueba primero la IPv4. Requiere Node 18+.
+dns.setDefaultResultOrder('ipv4first');
 
 // Envío simple vía Gmail usando una "contraseña de aplicación"
 // (myaccount.google.com/apppasswords). No requiere OAuth ni Google Cloud
@@ -8,14 +20,6 @@ const nodemailer = require('nodemailer');
 //   GMAIL_USER           -> la cuenta de Gmail que envía (ej. notificaciones@gmail.com)
 //   GMAIL_APP_PASSWORD   -> la contraseña de aplicación de 16 caracteres
 //   GMAIL_DESTINO        -> (opcional) a dónde llega el aviso; si no se define, se manda a GMAIL_USER
-//
-// NOTA IMPORTANTE (Render / hostings sin salida IPv6):
-// Usamos host/port/secure explícitos en vez del atajo `service: 'gmail'`
-// para poder forzar `family: 4` (IPv4). Sin esto, en hostings donde el
-// DNS devuelve una IPv6 para smtp.gmail.com pero el servidor no tiene
-// salida de red por IPv6, la conexión queda colgada hasta hacer
-// timeout (ETIMEDOUT / ENETUNREACH), aunque las credenciales sean
-// correctas — nunca llega a intentar el login.
 const transporter = nodemailer.createTransport({
   host: 'smtp.gmail.com',
   port: 465,
