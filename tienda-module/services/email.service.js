@@ -8,8 +8,19 @@ const nodemailer = require('nodemailer');
 //   GMAIL_USER           -> la cuenta de Gmail que envía (ej. notificaciones@gmail.com)
 //   GMAIL_APP_PASSWORD   -> la contraseña de aplicación de 16 caracteres
 //   GMAIL_DESTINO        -> (opcional) a dónde llega el aviso; si no se define, se manda a GMAIL_USER
+//
+// NOTA IMPORTANTE (Render / hostings sin salida IPv6):
+// Usamos host/port/secure explícitos en vez del atajo `service: 'gmail'`
+// para poder forzar `family: 4` (IPv4). Sin esto, en hostings donde el
+// DNS devuelve una IPv6 para smtp.gmail.com pero el servidor no tiene
+// salida de red por IPv6, la conexión queda colgada hasta hacer
+// timeout (ETIMEDOUT / ENETUNREACH), aunque las credenciales sean
+// correctas — nunca llega a intentar el login.
 const transporter = nodemailer.createTransport({
-  service: 'gmail',
+  host: 'smtp.gmail.com',
+  port: 465,
+  secure: true,
+  family: 4,
   auth: {
     user: process.env.GMAIL_USER,
     pass: process.env.GMAIL_APP_PASSWORD,
